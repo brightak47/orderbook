@@ -1,3 +1,5 @@
+# app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,6 +9,7 @@ from binance import AsyncClient, BinanceSocketManager
 from datetime import datetime, timedelta
 import plotly.graph_objs as go
 from threading import Thread
+import logging
 
 # -----------------------------
 # Configuration and Constants
@@ -15,7 +18,19 @@ SYMBOL = 'BTCUSDT'  # Trading pair
 DEPTH = 20  # Number of price levels
 DAYS_AVG_VOLUME = 30  # Days to calculate average daily volume
 
-# Initialize session state
+# -----------------------------
+# Setup Logging
+# -----------------------------
+logging.basicConfig(
+    filename='app.log',
+    filemode='a',
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
+# -----------------------------
+# Initialize Session State
+# -----------------------------
 if 'avg_daily_volume' not in st.session_state:
     st.session_state.avg_daily_volume = 0
 
@@ -28,71 +43,101 @@ if 'asks' not in st.session_state:
 if 'signal' not in st.session_state:
     st.session_state.signal = 'Neutral'
 
+if 'liquidity_bid' not in st.session_state:
+    st.session_state.liquidity_bid = 0.0
+
+if 'liquidity_ask' not in st.session_state:
+    st.session_state.liquidity_ask = 0.0
+
+if 'liquidity_bid_pct' not in st.session_state:
+    st.session_state.liquidity_bid_pct = 0.0
+
+if 'liquidity_ask_pct' not in st.session_state:
+    st.session_state.liquidity_ask_pct = 0.0
+
 # -----------------------------
 # Helper Functions
 # -----------------------------
 
 async def fetch_avg_daily_volume(symbol: str, days: int = 30):
     """Fetches the average daily trading volume for a given symbol over a specified number of days."""
-    client = await AsyncClient.create()
-    klines = await client.get_historical_klines(symbol, AsyncClient.KLINE_INTERVAL_1DAY, f"{days} day ago UTC")
-    await client.close_connection()
-    volumes = [float(kline[5]) for kline in klines]  # Volume is the 6th element
-    avg_volume = sum(volumes) / len(volumes)
-    return avg_volume
+    try:
+        client = await AsyncClient.create()
+        klines = await client.get_historical_klines(symbol, AsyncClient.KLINE_INTERVAL_1DAY, f"{days} day ago UTC")
+        await client.close_connection()
+        volumes = [float(kline[5]) for kline in klines]  # Volume is the 6th element
+        avg_volume = sum(volumes) / len(volumes)
+        logging.info(f"Fetched average daily volume for {symbol}: {avg_volume}")
+        return avg_volume
+    except Exception as e:
+        logging.error(f"Error fetching average daily volume: {e}")
+        return 0.0
 
 def calculate_liquidity(bids, asks, levels, avg_daily_volume):
     """Calculates liquidity metrics based on the top 'levels' bids and asks."""
-    selected_bids = bids[:levels]
-    selected_asks = asks[:levels]
-    
-    liquidity_bid = sum([float(q) for _, q in selected_bids])
-    liquidity_ask = sum([float(q) for _, q in selected_asks])
-    
-    liquidity_bid_pct = (liquidity_bid / avg_daily_volume) * 100
-    liquidity_ask_pct = (liquidity_ask / avg_daily_volume) * 100
-    
-    return liquidity_bid, liquidity_ask, liquidity_bid_pct, liquidity_ask_pct
+    try:
+        selected_bids = bids[:levels]
+        selected_asks = asks[:levels]
+        
+        liquidity_bid = sum([float(q) for _, q in selected_bids])
+        liquidity_ask = sum([float(q) for _, q in selected_asks])
+        
+        liquidity_bid_pct = (liquidity_bid / avg_daily_volume) * 100 if avg_daily_volume > 0 else 0
+        liquidity_ask_pct = (liquidity_ask / avg_daily_volume) * 100 if avg_daily_volume > 0 else 0
+        
+        return liquidity_bid, liquidity_ask, liquidity_bid_pct, liquidity_ask_pct
+    except Exception as e:
+        logging.error(f"Error calculating liquidity: {e}")
+        return 0.0, 0.0, 0.0, 0.0
 
 def generate_signal(liquidity_bid_pct, liquidity_ask_pct, threshold):
     """Generates Buy/Sell/Neutral signals based on liquidity percentages and a threshold."""
-    if liquidity_bid_pct > threshold and liquidity_ask_pct <= threshold:
-        return 'Buy'
-    elif liquidity_ask_pct > threshold and liquidity_bid_pct <= threshold:
-        return 'Sell'
-    else:
+    try:
+        if liquidity_bid_pct > threshold and liquidity_ask_pct <= threshold:
+            return 'Buy'
+        elif liquidity_ask_pct > threshold and liquidity_bid_pct <= threshold:
+            return 'Sell'
+        else:
+            return 'Neutral'
+    except Exception as e:
+        logging.error(f"Error generating signal: {e}")
         return 'Neutral'
 
 async def listen_order_book(symbol, depth, levels, threshold):
     """Listens to the Binance WebSocket for order book updates and processes liquidity signals."""
-    client = await AsyncClient.create()
-    bm = BinanceSocketManager(client)
-    socket = bm.depth_socket(symbol, depth)
-    
-    async with socket as s:
-        while True:
-            res = await s.recv()
-            bids = res.get('bids', [])
-            asks = res.get('asks', [])
-            
-            liquidity_bid, liquidity_ask, liquidity_bid_pct, liquidity_ask_pct = calculate_liquidity(
-                bids, asks, levels, st.session_state.avg_daily_volume
-            )
-            
-            signal = generate_signal(liquidity_bid_pct, liquidity_ask_pct, threshold)
-            
-            # Update session state
-            st.session_state.bids = bids[:levels]
-            st.session_state.asks = asks[:levels]
-            st.session_state.signal = signal
-            st.session_state.liquidity_bid = liquidity_bid
-            st.session_state.liquidity_ask = liquidity_ask
-            st.session_state.liquidity_bid_pct = liquidity_bid_pct
-            st.session_state.liquidity_ask_pct = liquidity_ask_pct
-
-            await asyncio.sleep(0.5)  # Control update frequency
-
-    await client.close_connection()
+    try:
+        client = await AsyncClient.create()
+        bm = BinanceSocketManager(client)
+        socket = bm.depth_socket(symbol, depth)
+        
+        async with socket as s:
+            while True:
+                res = await s.recv()
+                bids = res.get('bids', [])
+                asks = res.get('asks', [])
+                
+                liquidity_bid, liquidity_ask, liquidity_bid_pct, liquidity_ask_pct = calculate_liquidity(
+                    bids, asks, levels, st.session_state.avg_daily_volume
+                )
+                
+                signal = generate_signal(liquidity_bid_pct, liquidity_ask_pct, threshold)
+                
+                # Update session state
+                st.session_state.bids = bids[:levels]
+                st.session_state.asks = asks[:levels]
+                st.session_state.signal = signal
+                st.session_state.liquidity_bid = liquidity_bid
+                st.session_state.liquidity_ask = liquidity_ask
+                st.session_state.liquidity_bid_pct = liquidity_bid_pct
+                st.session_state.liquidity_ask_pct = liquidity_ask_pct
+                
+                logging.info(f"Updated Liquidity - Bid: {liquidity_bid} ({liquidity_bid_pct:.2f}%), Ask: {liquidity_ask} ({liquidity_ask_pct:.2f}%) - Signal: {signal}")
+                
+                await asyncio.sleep(0.5)  # Control update frequency
+    except Exception as e:
+        logging.error(f"Error in WebSocket listener: {e}")
+    finally:
+        await client.close_connection()
 
 def run_asyncio(loop):
     asyncio.set_event_loop(loop)
@@ -111,17 +156,24 @@ st.sidebar.header("Settings")
 price_levels = st.sidebar.slider("Select Price Levels", min_value=1, max_value=20, value=10, key='price_levels')
 threshold = st.sidebar.slider("Liquidity Threshold (%)", min_value=0.1, max_value=10.0, value=1.0, step=0.1, key='threshold')
 
-# Display Average Daily Volume
+# Fetch Average Daily Volume Once
 if st.session_state.avg_daily_volume == 0:
-    st.session_state.avg_daily_volume = asyncio.run(fetch_avg_daily_volume(SYMBOL, DAYS_AVG_VOLUME))
-    st.sidebar.write(f"**Avg Daily Volume ({DAYS_AVG_VOLUME} days):** {st.session_state.avg_daily_volume:.2f}")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    avg_volume = loop.run_until_complete(fetch_avg_daily_volume(SYMBOL, DAYS_AVG_VOLUME))
+    st.session_state.avg_daily_volume = avg_volume
+    if avg_volume == 0.0:
+        st.error("Failed to fetch average daily volume. Please check your network connection or API usage.")
+    else:
+        st.sidebar.write(f"**Avg Daily Volume ({DAYS_AVG_VOLUME} days):** {st.session_state.avg_daily_volume:.2f}")
 
 # Start WebSocket Listener in a Separate Thread
-if 'thread' not in st.session_state:
+if 'thread' not in st.session_state and st.session_state.avg_daily_volume > 0.0:
     loop = asyncio.new_event_loop()
     thread = Thread(target=run_asyncio, args=(loop,), daemon=True)
     thread.start()
     st.session_state.thread = thread
+    st.info("Connected to Binance WebSocket and listening for order book updates.")
 
 # Display Liquidity Metrics
 col1, col2 = st.columns(2)
