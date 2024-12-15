@@ -5,11 +5,11 @@ import pandas as pd
 import numpy as np
 import asyncio
 import json
-from binance import AsyncClient, BinanceSocketManager
 from datetime import datetime, timedelta
 import plotly.graph_objs as go
 from threading import Thread
 import logging
+import requests  # New import
 
 # -----------------------------
 # Configuration and Constants
@@ -56,26 +56,22 @@ if 'liquidity_ask_pct' not in st.session_state:
     st.session_state.liquidity_ask_pct = 0.0
 
 # -----------------------------
-# Access Binance API Keys
-# -----------------------------
-# If you intend to use private endpoints, ensure you have API keys.
-# For public data, API keys are not required.
-
-# Uncomment the following lines if using API keys:
-# api_key = st.secrets["binance"]["api_key"]
-# api_secret = st.secrets["binance"]["api_secret"]
-
-# -----------------------------
 # Helper Functions
 # -----------------------------
 
-async def fetch_avg_daily_volume(symbol: str, days: int = 30, retries: int = 3, delay: int = 5):
-    """Fetches the average daily trading volume with retry logic."""
+def fetch_avg_daily_volume_sync(symbol: str, days: int = 30, retries: int = 3, delay: int = 5):
+    """Fetches the average daily trading volume with retry logic using requests."""
+    url = 'https://api.binance.com/api/v3/klines'
+    params = {
+        'symbol': symbol,
+        'interval': '1d',
+        'limit': days
+    }
     for attempt in range(1, retries + 1):
         try:
-            client = await AsyncClient.create()  # No API keys passed for public data
-            klines = await client.get_historical_klines(symbol, AsyncClient.KLINE_INTERVAL_1DAY, f"{days} day ago UTC")
-            await client.close_connection()
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            klines = response.json()
             if not klines:
                 raise ValueError("No kline data received.")
             volumes = [float(kline[5]) for kline in klines]  # Volume is the 6th element
@@ -86,7 +82,7 @@ async def fetch_avg_daily_volume(symbol: str, days: int = 30, retries: int = 3, 
             logging.error(f"Attempt {attempt} - Error fetching average daily volume: {e}")
             if attempt < retries:
                 st.warning(f"Attempt {attempt} failed. Retrying in {delay} seconds...")
-                await asyncio.sleep(delay)
+                time.sleep(delay)
             else:
                 st.error(f"Failed to fetch average daily volume after {retries} attempts.")
                 return 0.0
@@ -121,46 +117,18 @@ def generate_signal(liquidity_bid_pct, liquidity_ask_pct, threshold):
         logging.error(f"Error generating signal: {e}")
         return 'Neutral'
 
-async def listen_order_book(symbol, depth, levels, threshold):
+def listen_order_book(symbol, depth, levels, threshold):
     """Listens to the Binance WebSocket for order book updates and processes liquidity signals."""
-    try:
-        client = await AsyncClient.create()  # No API keys passed for public data
-        bm = BinanceSocketManager(client)
-        socket = bm.depth_socket(symbol, depth)
-        
-        async with socket as s:
-            while True:
-                res = await s.recv()
-                bids = res.get('bids', [])
-                asks = res.get('asks', [])
-                
-                liquidity_bid, liquidity_ask, liquidity_bid_pct, liquidity_ask_pct = calculate_liquidity(
-                    bids, asks, levels, st.session_state.avg_daily_volume
-                )
-                
-                signal = generate_signal(liquidity_bid_pct, liquidity_ask_pct, threshold)
-                
-                # Update session state
-                st.session_state.bids = bids[:levels]
-                st.session_state.asks = asks[:levels]
-                st.session_state.signal = signal
-                st.session_state.liquidity_bid = liquidity_bid
-                st.session_state.liquidity_ask = liquidity_ask
-                st.session_state.liquidity_bid_pct = liquidity_bid_pct
-                st.session_state.liquidity_ask_pct = liquidity_ask_pct
-                
-                logging.info(f"Updated Liquidity - Bid: {liquidity_bid} ({liquidity_bid_pct:.2f}%), Ask: {liquidity_ask} ({liquidity_ask_pct:.2f}%) - Signal: {signal}")
-                
-                await asyncio.sleep(0.5)  # Control update frequency
-    except Exception as e:
-        logging.error(f"Error in WebSocket listener: {e}")
-        st.error(f"WebSocket listener encountered an error: {e}")
-    finally:
-        await client.close_connection()
+    # Implement WebSocket listener here using a different method or library
+    pass  # Placeholder
 
-def run_asyncio(loop):
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(listen_order_book(SYMBOL, DEPTH, st.session_state.price_levels, st.session_state.threshold))
+def run_sync_fetch(loop, symbol, days):
+    avg_volume = fetch_avg_daily_volume_sync(symbol, days)
+    st.session_state.avg_daily_volume = avg_volume
+    if avg_volume == 0.0:
+        st.sidebar.error("Failed to fetch average daily volume. Please check your network connection or API usage.")
+    else:
+        st.sidebar.write(f"**Avg Daily Volume ({DAYS_AVG_VOLUME} days):** {st.session_state.avg_daily_volume:.2f}")
 
 # -----------------------------
 # Streamlit App Layout
@@ -177,22 +145,13 @@ threshold = st.sidebar.slider("Liquidity Threshold (%)", min_value=0.1, max_valu
 
 # Display Average Daily Volume
 if st.session_state.avg_daily_volume == 0 and price_levels > 0 and threshold > 0:
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    avg_volume = loop.run_until_complete(fetch_avg_daily_volume(SYMBOL, DAYS_AVG_VOLUME))
-    st.session_state.avg_daily_volume = avg_volume
-    if avg_volume == 0.0:
-        st.sidebar.error("Failed to fetch average daily volume. Please check your network connection or API usage.")
-    else:
-        st.sidebar.write(f"**Avg Daily Volume ({DAYS_AVG_VOLUME} days):** {st.session_state.avg_daily_volume:.2f}")
+    thread = Thread(target=run_sync_fetch, args=(None, SYMBOL, DAYS_AVG_VOLUME), daemon=True)
+    thread.start()
 
 # Start WebSocket Listener in a Separate Thread
 if 'thread' not in st.session_state and st.session_state.avg_daily_volume > 0.0:
-    loop = asyncio.new_event_loop()
-    thread = Thread(target=run_asyncio, args=(loop,), daemon=True)
-    thread.start()
-    st.session_state.thread = thread
-    st.info("Connected to Binance WebSocket and listening for order book updates.")
+    # Implement WebSocket listener here
+    pass  # Placeholder
 
 # Display Liquidity Metrics
 col1, col2 = st.columns(2)
