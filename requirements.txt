@@ -1,0 +1,7 @@
+streamlit
+python-binance
+pandas
+numpy
+plotly
+websockets
+asyncio
