@@ -58,26 +58,38 @@ if 'liquidity_ask_pct' not in st.session_state:
 # -----------------------------
 # Access Binance API Keys
 # -----------------------------
-api_key = st.secrets["binance"]["api_key"]
-api_secret = st.secrets["binance"]["api_secret"]
+# If you intend to use private endpoints, ensure you have API keys.
+# For public data, API keys are not required.
+
+# Uncomment the following lines if using API keys:
+# api_key = st.secrets["binance"]["api_key"]
+# api_secret = st.secrets["binance"]["api_secret"]
 
 # -----------------------------
 # Helper Functions
 # -----------------------------
 
-async def fetch_avg_daily_volume(symbol: str, days: int = 30):
-    """Fetches the average daily trading volume for a given symbol over a specified number of days."""
-    try:
-        client = await AsyncClient.create(api_key, api_secret)
-        klines = await client.get_historical_klines(symbol, AsyncClient.KLINE_INTERVAL_1DAY, f"{days} day ago UTC")
-        await client.close_connection()
-        volumes = [float(kline[5]) for kline in klines]  # Volume is the 6th element
-        avg_volume = sum(volumes) / len(volumes)
-        logging.info(f"Fetched average daily volume for {symbol}: {avg_volume}")
-        return avg_volume
-    except Exception as e:
-        logging.error(f"Error fetching average daily volume: {e}")
-        return 0.0
+async def fetch_avg_daily_volume(symbol: str, days: int = 30, retries: int = 3, delay: int = 5):
+    """Fetches the average daily trading volume with retry logic."""
+    for attempt in range(1, retries + 1):
+        try:
+            client = await AsyncClient.create()  # No API keys passed for public data
+            klines = await client.get_historical_klines(symbol, AsyncClient.KLINE_INTERVAL_1DAY, f"{days} day ago UTC")
+            await client.close_connection()
+            if not klines:
+                raise ValueError("No kline data received.")
+            volumes = [float(kline[5]) for kline in klines]  # Volume is the 6th element
+            avg_volume = sum(volumes) / len(volumes)
+            logging.info(f"Fetched average daily volume for {symbol}: {avg_volume}")
+            return avg_volume
+        except Exception as e:
+            logging.error(f"Attempt {attempt} - Error fetching average daily volume: {e}")
+            if attempt < retries:
+                st.warning(f"Attempt {attempt} failed. Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+            else:
+                st.error(f"Failed to fetch average daily volume after {retries} attempts.")
+                return 0.0
 
 def calculate_liquidity(bids, asks, levels, avg_daily_volume):
     """Calculates liquidity metrics based on the top 'levels' bids and asks."""
@@ -112,7 +124,7 @@ def generate_signal(liquidity_bid_pct, liquidity_ask_pct, threshold):
 async def listen_order_book(symbol, depth, levels, threshold):
     """Listens to the Binance WebSocket for order book updates and processes liquidity signals."""
     try:
-        client = await AsyncClient.create(api_key, api_secret)
+        client = await AsyncClient.create()  # No API keys passed for public data
         bm = BinanceSocketManager(client)
         socket = bm.depth_socket(symbol, depth)
         
@@ -142,6 +154,7 @@ async def listen_order_book(symbol, depth, levels, threshold):
                 await asyncio.sleep(0.5)  # Control update frequency
     except Exception as e:
         logging.error(f"Error in WebSocket listener: {e}")
+        st.error(f"WebSocket listener encountered an error: {e}")
     finally:
         await client.close_connection()
 
@@ -163,7 +176,7 @@ price_levels = st.sidebar.slider("Select Price Levels", min_value=1, max_value=2
 threshold = st.sidebar.slider("Liquidity Threshold (%)", min_value=0.1, max_value=10.0, value=1.0, step=0.1, key='threshold')
 
 # Display Average Daily Volume
-if st.session_state.avg_daily_volume == 0 and st.session_state.price_levels > 0 and st.session_state.threshold > 0:
+if st.session_state.avg_daily_volume == 0 and price_levels > 0 and threshold > 0:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     avg_volume = loop.run_until_complete(fetch_avg_daily_volume(SYMBOL, DAYS_AVG_VOLUME))
