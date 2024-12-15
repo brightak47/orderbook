@@ -56,13 +56,19 @@ if 'liquidity_ask_pct' not in st.session_state:
     st.session_state.liquidity_ask_pct = 0.0
 
 # -----------------------------
+# Access Binance API Keys
+# -----------------------------
+api_key = st.secrets["binance"]["api_key"]
+api_secret = st.secrets["binance"]["api_secret"]
+
+# -----------------------------
 # Helper Functions
 # -----------------------------
 
 async def fetch_avg_daily_volume(symbol: str, days: int = 30):
     """Fetches the average daily trading volume for a given symbol over a specified number of days."""
     try:
-        client = await AsyncClient.create()
+        client = await AsyncClient.create(api_key, api_secret)
         klines = await client.get_historical_klines(symbol, AsyncClient.KLINE_INTERVAL_1DAY, f"{days} day ago UTC")
         await client.close_connection()
         volumes = [float(kline[5]) for kline in klines]  # Volume is the 6th element
@@ -106,7 +112,7 @@ def generate_signal(liquidity_bid_pct, liquidity_ask_pct, threshold):
 async def listen_order_book(symbol, depth, levels, threshold):
     """Listens to the Binance WebSocket for order book updates and processes liquidity signals."""
     try:
-        client = await AsyncClient.create()
+        client = await AsyncClient.create(api_key, api_secret)
         bm = BinanceSocketManager(client)
         socket = bm.depth_socket(symbol, depth)
         
@@ -156,14 +162,14 @@ st.sidebar.header("Settings")
 price_levels = st.sidebar.slider("Select Price Levels", min_value=1, max_value=20, value=10, key='price_levels')
 threshold = st.sidebar.slider("Liquidity Threshold (%)", min_value=0.1, max_value=10.0, value=1.0, step=0.1, key='threshold')
 
-# Fetch Average Daily Volume Once
-if st.session_state.avg_daily_volume == 0:
+# Display Average Daily Volume
+if st.session_state.avg_daily_volume == 0 and st.session_state.price_levels > 0 and st.session_state.threshold > 0:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     avg_volume = loop.run_until_complete(fetch_avg_daily_volume(SYMBOL, DAYS_AVG_VOLUME))
     st.session_state.avg_daily_volume = avg_volume
     if avg_volume == 0.0:
-        st.error("Failed to fetch average daily volume. Please check your network connection or API usage.")
+        st.sidebar.error("Failed to fetch average daily volume. Please check your network connection or API usage.")
     else:
         st.sidebar.write(f"**Avg Daily Volume ({DAYS_AVG_VOLUME} days):** {st.session_state.avg_daily_volume:.2f}")
 
