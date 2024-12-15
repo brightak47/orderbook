@@ -178,6 +178,15 @@ if st.session_state.avg_daily_volume == 0 and price_levels > 0 and threshold > 0
 # Debugging: Check the type and value of avg_daily_volume
 st.write(f"avg_daily_volume: {st.session_state.avg_daily_volume} (type: {type(st.session_state.avg_daily_volume)})")
 
+# Convert avg_daily_volume to float if it's a string
+if isinstance(st.session_state.avg_daily_volume, str):
+    try:
+        st.session_state.avg_daily_volume = float(st.session_state.avg_daily_volume)
+        st.warning("Converted avg_daily_volume from string to float.")
+    except ValueError:
+        st.error("avg_daily_volume is not a valid number.")
+        st.session_state.avg_daily_volume = 0.0
+
 # Start WebSocket Listener in a Separate Thread
 if 'thread' not in st.session_state and st.session_state.avg_daily_volume > 0.0:
     thread = Thread(target=run_order_book_listener, args=(SYMBOL, DEPTH, price_levels, threshold, st.session_state.data_queue), daemon=True)
