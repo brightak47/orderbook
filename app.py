@@ -112,4 +112,6 @@ def display_historical_chart(df, symbol):
 # Streamlit App Layout
 # -----------------------------
 
-st.set_page_config(page_title="Binance 
+st.set_page_config(page_title="Binance Trading App", layout="wide")
+
+st.title("🔍 Binance Real-Time Trading App")
