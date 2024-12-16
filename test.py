@@ -1,3 +1,5 @@
+import streamlit as st
+
 from binance.client import Client
 
 API_KEY = "your_actual_api_key"
