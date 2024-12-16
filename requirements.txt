@@ -2,4 +2,3 @@ streamlit
 python-binance
 python-dotenv
 pandas
-python-binance
