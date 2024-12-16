@@ -1,7 +1,4 @@
 streamlit
 python-binance
+python-dotenv
 pandas
-numpy
-plotly
-websockets
-asyncio
