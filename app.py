@@ -8,8 +8,10 @@ import time
 # -----------------------------
 # Load Environment Variables
 # -----------------------------
-st.write(f"API_KEY: {st.secrets['binance']['api_key']}")
-st.write(f"API_SECRET: {st.secrets['binance']['api_secret']}")
+
+print(f"API_KEY: {os.getenv('BINANCE_API_KEY')}")
+print(f"API_SECRET: {os.getenv('BINANCE_API_SECRET')}")
+
 
 # -----------------------------
 # Initialize Binance Client
