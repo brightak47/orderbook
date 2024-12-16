@@ -8,9 +8,8 @@ import time
 # -----------------------------
 # Load Environment Variables
 # -----------------------------
-
-print(f"API_KEY: {os.getenv('BINANCE_API_KEY')}")
-print(f"API_SECRET: {os.getenv('BINANCE_API_SECRET')}")
+print(f"API Key: {st.secrets['binance']['api_key']}")
+print(f"API Secret: {st.secrets['binance']['api_secret']}")
 
 
 # -----------------------------
