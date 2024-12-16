@@ -8,9 +8,8 @@ import time
 # -----------------------------
 # Load Environment Variables
 # -----------------------------
-load_dotenv()  # Load from .env file
-API_KEY = os.getenv("BINANCE_API_KEY")
-API_SECRET = os.getenv("BINANCE_API_SECRET")
+st.write(f"API_KEY: {st.secrets['binance']['api_key']}")
+st.write(f"API_SECRET: {st.secrets['binance']['api_secret']}")
 
 # -----------------------------
 # Initialize Binance Client
